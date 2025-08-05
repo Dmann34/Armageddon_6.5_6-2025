@@ -326,3 +326,7 @@ Contributions are welcome! Please follow these conventions:
 * Add descriptive comments and validations
 * Test in a non-production environment before submitting
 
+## Changelog
+
+# v1.0.0
+- initial release
