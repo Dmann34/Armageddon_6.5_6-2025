@@ -1,0 +1,175 @@
+
+######################################################
+# Router Appliance for Spoke A (Project A)
+######################################################
+
+resource "google_compute_instance" "router_appliance_a" {
+  name         = "router-appliance-a"
+  machine_type = "e2-small"
+  zone         = "us-central1-a"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.spoke_a_vpc.id
+    subnetwork = google_compute_subnetwork.spoke_a_subnet.id
+    access_config {}
+    network_ip = "10.10.1.100"
+  }
+
+  metadata_startup_script = <<EOF
+#!/bin/bash
+apt-get update
+apt-get install -y frr
+cat <<CONFIG > /etc/frr/frr.conf
+frr defaults traditional
+hostname router-appliance-a
+!
+router bgp 65001
+ bgp router-id 10.10.1.100
+ neighbor 169.254.0.1 remote-as 64512
+ !
+ address-family ipv4 unicast
+  network 10.10.1.0/24
+ exit-address-family
+CONFIG
+systemctl restart frr
+EOF
+
+  tags = ["router-appliance"]
+}
+
+resource "google_network_connectivity_spoke" "router_appliance_spoke_a" {
+  name     = "router-appliance-spoke-a"
+  hub      = google_network_connectivity_hub.main_hub.id
+  location = "us-central1"
+
+  linked_router_appliance_instances {
+    instances {
+      virtual_machine = google_compute_instance.router_appliance_a.id
+      ip_address      = google_compute_instance.router_appliance_a.network_interface[0].network_ip
+    }
+    site_to_site_data_transfer = true
+  }
+
+  depends_on = [google_compute_instance.router_appliance_a]
+}
+
+######################################################
+# Router Appliance for Spoke B (Project B)
+######################################################
+
+resource "google_compute_instance" "router_appliance_b" {
+  provider     = google.scout
+  name         = "router-appliance-b"
+  machine_type = "e2-small"
+  zone         = "us-east1-b"
+
+  boot_disk {
+    initialize_params {
+      image = "debian-cloud/debian-11"
+    }
+  }
+
+  network_interface {
+    network    = google_compute_network.spoke_b_vpc.id
+    subnetwork = google_compute_subnetwork.spoke_b_subnet.id
+    access_config {}
+    network_ip = "10.10.2.100"
+  }
+
+  metadata_startup_script = <<EOF
+#!/bin/bash
+apt-get update
+apt-get install -y frr
+cat <<CONFIG > /etc/frr/frr.conf
+frr defaults traditional
+hostname router-appliance-b
+!
+router bgp 65002
+ bgp router-id 10.10.2.100
+ neighbor 169.254.0.5 remote-as 64512
+ !
+ address-family ipv4 unicast
+  network 10.10.2.0/24
+ exit-address-family
+CONFIG
+systemctl restart frr
+EOF
+
+  tags = ["router-appliance"]
+}
+
+resource "google_network_connectivity_spoke" "router_appliance_spoke_b" {
+  provider = google.scout
+  name     = "router-appliance-spoke-b"
+  hub      = google_network_connectivity_hub.main_hub.id
+  location = "us-east1"
+
+  linked_router_appliance_instances {
+    instances {
+      virtual_machine = google_compute_instance.router_appliance_b.id
+      ip_address      = google_compute_instance.router_appliance_b.network_interface[0].network_ip
+    }
+    site_to_site_data_transfer = true
+  }
+
+  depends_on = [google_compute_instance.router_appliance_b]
+}
+
+######################################################
+# BGP Configuration in NCC Hub
+######################################################
+
+# Update the NCC Cloud Router to specify BGP AS number
+# resource "google_compute_router" "ncc_router" {
+#   provider = google.ncc
+#   name     = "ncc-cloud-router"
+#   region   = "us-central1"
+#   network  = google_compute_network.ncc_vpc.name
+#   bgp {
+#     asn = 64512
+#   }
+# }
+
+# Router Interface and Peer for Spoke A
+resource "google_compute_router_interface" "interface_spoke_a" {
+  provider = google.ncc
+  name     = "interface-spoke-a"
+  router   = google_compute_router.ncc_router.name
+  region   = google_compute_router.ncc_router.region
+  ip_range = "169.254.0.1/30"
+}
+
+resource "google_compute_router_peer" "peer_spoke_a" {
+  provider        = google.ncc
+  name            = "peer-spoke-a"
+  router          = google_compute_router.ncc_router.name
+  region          = google_compute_router.ncc_router.region
+  interface       = google_compute_router_interface.interface_spoke_a.name
+  peer_ip_address = "169.254.0.2"
+  peer_asn        = 65001
+}
+
+# Router Interface and Peer for Spoke B
+resource "google_compute_router_interface" "interface_spoke_b" {
+  provider = google.ncc
+  name     = "interface-spoke-b"
+  router   = google_compute_router.ncc_router.name
+  region   = google_compute_router.ncc_router.region
+  ip_range = "169.254.0.5/30"
+}
+
+resource "google_compute_router_peer" "peer_spoke_b" {
+  provider        = google.ncc
+  name            = "peer-spoke-b"
+  router          = google_compute_router.ncc_router.name
+  region          = google_compute_router.ncc_router.region
+  interface       = google_compute_router_interface.interface_spoke_b.name
+  peer_ip_address = "169.254.0.6"
+  peer_asn        = 65002
+}
